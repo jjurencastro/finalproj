@@ -254,6 +254,19 @@ def load_ciphertext(stored_name: str) -> bytes | None:
         raise RuntimeError(f"Object storage read failed: {exc}") from exc
 
 
+def storage_error_hint(error_text: str) -> str:
+    text = error_text.lower()
+    if "nosuchbucket" in text:
+        return "Storage bucket not found. Check S3_BUCKET."
+    if "accessdenied" in text:
+        return "Storage access denied. Check key permissions for bucket read/write."
+    if "invalidaccesskeyid" in text or "signaturedoesnotmatch" in text:
+        return "Storage credentials/signing failed. Check S3 keys, region, and endpoint."
+    if "could not connect" in text or "endpoint" in text:
+        return "Storage endpoint unreachable. Check S3_ENDPOINT_URL and network access."
+    return "Storage request failed. Check S3 endpoint, region, bucket, and credentials."
+
+
 def ensure_csrf_token() -> str:
     token = session.get("csrf_token")
     if token is None:
@@ -398,7 +411,7 @@ def upload() -> str:
         store_ciphertext(stored_name, ciphertext)
     except RuntimeError as exc:
         app.logger.exception("Upload object storage failure: %s", exc)
-        flash("Unable to store encrypted file right now. Please try again.", "error")
+        flash(storage_error_hint(str(exc)), "error")
         return redirect(url_for("dashboard"))
 
     get_db().execute(
@@ -441,7 +454,7 @@ def download(file_id: int):
         ciphertext = load_ciphertext(row["stored_name"])
     except RuntimeError as exc:
         app.logger.exception("Download object storage failure: %s", exc)
-        abort(503, "Object storage unavailable")
+        abort(503, storage_error_hint(str(exc)))
 
     if ciphertext is None:
         abort(404)

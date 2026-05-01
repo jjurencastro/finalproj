@@ -121,3 +121,4 @@ http://localhost:5000
 6. Redeploy. Tables are auto-created when the app first reaches the database.
 
 If upload/download fails, check deploy logs for `Upload object storage failure` or `Download object storage failure` to see the exact provider error code/message.
+The dashboard and download errors also show a short actionable hint based on provider error codes (bucket, credentials, endpoint, or permissions).
