@@ -11,6 +11,7 @@ from typing import Any
 
 import boto3
 import psycopg
+from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes
@@ -44,6 +45,7 @@ S3_REGION = os.environ.get("S3_REGION", "us-east-1")
 S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL")
 S3_ACCESS_KEY_ID = os.environ.get("S3_ACCESS_KEY_ID")
 S3_SECRET_ACCESS_KEY = os.environ.get("S3_SECRET_ACCESS_KEY")
+S3_FORCE_PATH_STYLE = os.environ.get("S3_FORCE_PATH_STYLE", "0") == "1"
 DB_CONNECT_TIMEOUT = int(os.environ.get("DB_CONNECT_TIMEOUT", "5"))
 
 _db_bootstrap_lock = threading.Lock()
@@ -101,13 +103,16 @@ def load_master_key() -> bytes:
 
 MASTER_KEY = load_master_key()
 
-s3_client = boto3.client(
-    "s3",
-    endpoint_url=S3_ENDPOINT_URL,
-    aws_access_key_id=S3_ACCESS_KEY_ID,
-    aws_secret_access_key=S3_SECRET_ACCESS_KEY,
-    region_name=S3_REGION,
-)
+s3_client_kwargs: dict[str, Any] = {
+    "endpoint_url": S3_ENDPOINT_URL,
+    "aws_access_key_id": S3_ACCESS_KEY_ID,
+    "aws_secret_access_key": S3_SECRET_ACCESS_KEY,
+    "region_name": S3_REGION,
+}
+if S3_FORCE_PATH_STYLE:
+    s3_client_kwargs["config"] = Config(s3={"addressing_style": "path"})
+
+s3_client = boto3.client("s3", **s3_client_kwargs)
 
 app = Flask(__name__)
 app.config.update(
@@ -227,8 +232,12 @@ def store_ciphertext(stored_name: str, ciphertext: bytes) -> None:
             Body=ciphertext,
             ContentType="application/octet-stream",
         )
-    except (ClientError, BotoCoreError) as exc:
-        raise RuntimeError("Failed to write encrypted file to object storage") from exc
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "Unknown")
+        message = exc.response.get("Error", {}).get("Message", "Unknown error")
+        raise RuntimeError(f"Object storage write failed ({code}): {message}") from exc
+    except BotoCoreError as exc:
+        raise RuntimeError(f"Object storage write failed: {exc}") from exc
 
 
 def load_ciphertext(stored_name: str) -> bytes | None:
@@ -239,9 +248,10 @@ def load_ciphertext(stored_name: str) -> bytes | None:
         code = exc.response.get("Error", {}).get("Code", "")
         if code in {"NoSuchKey", "404"}:
             return None
-        raise RuntimeError("Failed to read encrypted file from object storage") from exc
+        message = exc.response.get("Error", {}).get("Message", "Unknown error")
+        raise RuntimeError(f"Object storage read failed ({code}): {message}") from exc
     except BotoCoreError as exc:
-        raise RuntimeError("Failed to read encrypted file from object storage") from exc
+        raise RuntimeError(f"Object storage read failed: {exc}") from exc
 
 
 def ensure_csrf_token() -> str:
@@ -386,7 +396,8 @@ def upload() -> str:
     stored_name = f"{uuid.uuid4().hex}.bin"
     try:
         store_ciphertext(stored_name, ciphertext)
-    except RuntimeError:
+    except RuntimeError as exc:
+        app.logger.exception("Upload object storage failure: %s", exc)
         flash("Unable to store encrypted file right now. Please try again.", "error")
         return redirect(url_for("dashboard"))
 
@@ -428,7 +439,8 @@ def download(file_id: int):
 
     try:
         ciphertext = load_ciphertext(row["stored_name"])
-    except RuntimeError:
+    except RuntimeError as exc:
+        app.logger.exception("Download object storage failure: %s", exc)
         abort(503, "Object storage unavailable")
 
     if ciphertext is None:

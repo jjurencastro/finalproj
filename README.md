@@ -109,6 +109,7 @@ http://localhost:5000
 
 1. Add Railway PostgreSQL and copy its `DATABASE_URL` into service variables.
 2. Configure S3-compatible storage variables (`S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`).
+	- If your provider requires path-style S3 URLs (common for MinIO/LocalStack/some gateways), set `S3_FORCE_PATH_STYLE=1`.
 3. Set `APP_SECRET_KEY`, `FILE_MASTER_KEY`, and `COOKIE_SECURE=1`.
 	 - Generate `FILE_MASTER_KEY` as URL-safe base64 (recommended):
 		 `python3 -c 'import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'`
@@ -118,3 +119,5 @@ http://localhost:5000
 4. Optional: set `DB_CONNECT_TIMEOUT` (seconds, default `5`) if you need to tune DB connect behavior.
 5. Optional: set the Railway health check path to `/healthz`.
 6. Redeploy. Tables are auto-created when the app first reaches the database.
+
+If upload/download fails, check deploy logs for `Upload object storage failure` or `Download object storage failure` to see the exact provider error code/message.
