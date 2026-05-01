@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar">
+    <div>
+        <h1>Welcome, {{ current_user.username }}</h1>
+        <p>Files are encrypted with AES-256-GCM before storage.</p>
+    </div>
+    <form class="inline-form" method="post" action="{{ url_for('logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="btn btn-secondary" type="submit">Log Out</button>
+    </form>
+</div>
+
+<div class="row">
+    <form method="post" action="{{ url_for('upload') }}" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="field">
+            <label for="file">Upload File (max 16MB)</label>
+            <input id="file" name="file" type="file" required>
+        </div>
+        <button class="btn" type="submit">Encrypt and Upload</button>
+    </form>
+</div>
+
+<div class="row">
+    <h1 style="font-size: 1.2rem; margin-top: 18px;">Your Files</h1>
+    {% if files %}
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Uploaded (UTC)</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for file in files %}
+            <tr>
+                <td>{{ file.original_name }}</td>
+                <td>{{ file.uploaded_at }}</td>
+                <td><a href="{{ url_for('download', file_id=file.id) }}">Decrypt and Download</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="muted">No files uploaded yet.</p>
+    {% endif %}
+</div>
+{% endblock %}

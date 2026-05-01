@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar">
+    <div>
+        <h1>Secure File Share</h1>
+        <p>Log in to upload and download encrypted files.</p>
+    </div>
+</div>
+
+<form method="post" action="{{ url_for('login') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div class="field">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" required minlength="3">
+    </div>
+
+    <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required minlength="8">
+    </div>
+
+    <button class="btn" type="submit">Log In</button>
+</form>
+
+<p class="muted">No account? <a href="{{ url_for('register') }}">Create one</a>.</p>
+{% endblock %}
