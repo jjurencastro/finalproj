@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime
 from io import BytesIO
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import boto3
 import psycopg
@@ -42,7 +43,7 @@ if not S3_BUCKET:
     raise RuntimeError("S3_BUCKET is required for encrypted object storage.")
 
 S3_REGION = os.environ.get("S3_REGION", "us-east-1")
-S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL")
+S3_ENDPOINT_URL_RAW = os.environ.get("S3_ENDPOINT_URL")
 S3_ACCESS_KEY_ID = os.environ.get("S3_ACCESS_KEY_ID")
 S3_SECRET_ACCESS_KEY = os.environ.get("S3_SECRET_ACCESS_KEY")
 S3_FORCE_PATH_STYLE = os.environ.get("S3_FORCE_PATH_STYLE", "0") == "1"
@@ -50,6 +51,30 @@ DB_CONNECT_TIMEOUT = int(os.environ.get("DB_CONNECT_TIMEOUT", "5"))
 
 _db_bootstrap_lock = threading.Lock()
 _db_bootstrapped = False
+
+
+def normalize_s3_endpoint(raw_endpoint: str | None, bucket: str) -> str | None:
+    if not raw_endpoint:
+        return None
+
+    value = raw_endpoint.strip().strip('"').strip("'")
+    if not value or value.lower() in {"none", "null"}:
+        return None
+
+    if "://" not in value:
+        value = f"https://{value}"
+
+    parsed = urlsplit(value)
+    if not parsed.netloc:
+        return value
+
+    path = (parsed.path or "").strip("/")
+    if path and path == bucket:
+        # Common misconfiguration: endpoint copied as https://host/bucket.
+        path = ""
+
+    normalized_path = f"/{path}" if path else ""
+    return urlunsplit((parsed.scheme, parsed.netloc, normalized_path, "", ""))
 
 
 def load_master_key() -> bytes:
@@ -102,6 +127,7 @@ def load_master_key() -> bytes:
 
 
 MASTER_KEY = load_master_key()
+S3_ENDPOINT_URL = normalize_s3_endpoint(S3_ENDPOINT_URL_RAW, S3_BUCKET)
 
 s3_client_kwargs: dict[str, Any] = {
     "endpoint_url": S3_ENDPOINT_URL,
@@ -263,7 +289,8 @@ def storage_error_hint(error_text: str) -> str:
     if "invalidaccesskeyid" in text or "signaturedoesnotmatch" in text:
         return "Storage credentials/signing failed. Check S3 keys, region, and endpoint."
     if "could not connect" in text or "endpoint" in text:
-        return "Storage endpoint unreachable. Check S3_ENDPOINT_URL and network access."
+        endpoint = S3_ENDPOINT_URL or "AWS default endpoint"
+        return f"Storage endpoint unreachable. Check S3_ENDPOINT_URL/network. Current endpoint: {endpoint}"
     return "Storage request failed. Check S3 endpoint, region, bucket, and credentials."
 
 
