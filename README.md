@@ -114,4 +114,6 @@ http://localhost:5000
 		 `python3 -c 'import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'`
 	 - The app also accepts a 64-char hex key:
 		 `python3 -c 'import secrets; print(secrets.token_hex(32))'`
-4. Redeploy. The app auto-creates required tables at startup.
+4. Optional: set `DB_CONNECT_TIMEOUT` (seconds, default `5`) if you need to tune DB connect behavior.
+5. Optional: set the Railway health check path to `/healthz`.
+6. Redeploy. Tables are auto-created when the app first reaches the database.

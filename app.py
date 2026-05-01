@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import threading
 import uuid
 from datetime import datetime
 from io import BytesIO
@@ -43,6 +44,10 @@ S3_REGION = os.environ.get("S3_REGION", "us-east-1")
 S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL")
 S3_ACCESS_KEY_ID = os.environ.get("S3_ACCESS_KEY_ID")
 S3_SECRET_ACCESS_KEY = os.environ.get("S3_SECRET_ACCESS_KEY")
+DB_CONNECT_TIMEOUT = int(os.environ.get("DB_CONNECT_TIMEOUT", "5"))
+
+_db_bootstrap_lock = threading.Lock()
+_db_bootstrapped = False
 
 
 def load_master_key() -> bytes:
@@ -101,8 +106,13 @@ app.config.update(
 
 
 def get_db() -> psycopg.Connection:
+    ensure_db_ready()
     if "db" not in g:
-        g.db = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        g.db = psycopg.connect(
+            DATABASE_URL,
+            row_factory=dict_row,
+            connect_timeout=DB_CONNECT_TIMEOUT,
+        )
     return g.db
 
 
@@ -114,7 +124,7 @@ def close_db(_: object) -> None:
 
 
 def init_db() -> None:
-    db = psycopg.connect(DATABASE_URL)
+    db = psycopg.connect(DATABASE_URL, connect_timeout=DB_CONNECT_TIMEOUT)
     db.execute(
         """
         CREATE TABLE IF NOT EXISTS users (
@@ -144,8 +154,22 @@ def init_db() -> None:
     db.close()
 
 
-# Ensure tables exist both for local runs and WSGI deployments (e.g., Railway + Gunicorn).
-init_db()
+def ensure_db_ready() -> None:
+    global _db_bootstrapped
+
+    if _db_bootstrapped:
+        return
+
+    with _db_bootstrap_lock:
+        if _db_bootstrapped:
+            return
+        try:
+            init_db()
+            _db_bootstrapped = True
+        except Exception as exc:
+            raise RuntimeError(
+                "Database is unavailable. Check DATABASE_URL/SSL settings and Postgres status."
+            ) from exc
 
 
 def derive_file_key(owner_id: int, salt: bytes) -> bytes:
@@ -230,6 +254,15 @@ def index() -> str:
     if session.get("user_id"):
         return redirect(url_for("dashboard"))
     return redirect(url_for("login"))
+
+
+@app.route("/healthz")
+def healthz() -> tuple[dict[str, str], int]:
+    try:
+        ensure_db_ready()
+    except RuntimeError as exc:
+        return {"status": "error", "detail": str(exc)}, 503
+    return {"status": "ok"}, 200
 
 
 @app.route("/register", methods=["GET", "POST"])
