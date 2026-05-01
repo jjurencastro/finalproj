@@ -53,13 +53,29 @@ def load_master_key() -> bytes:
             "FILE_MASTER_KEY is missing. Set it to a base64-encoded 32-byte key."
         )
 
+    # Accept a few common representations to reduce deployment misconfiguration:
+    # - URL-safe base64 (recommended)
+    # - Standard base64
+    # - 64-char hex string
+    raw_value = encoded_key.strip()
+
+    # Try hex first for explicitness and easy debugging.
     try:
-        key = base64.urlsafe_b64decode(encoded_key.encode("utf-8"))
+        if len(raw_value) == 64 and all(c in "0123456789abcdefABCDEF" for c in raw_value):
+            key = bytes.fromhex(raw_value)
+        else:
+            normalized = raw_value.replace("\n", "").replace("\r", "").replace(" ", "")
+            padding = "=" * ((4 - len(normalized) % 4) % 4)
+            key = base64.urlsafe_b64decode((normalized + padding).encode("utf-8"))
     except Exception as exc:  # pragma: no cover - defensive
-        raise RuntimeError("FILE_MASTER_KEY is not valid base64") from exc
+        raise RuntimeError(
+            "FILE_MASTER_KEY is invalid. Use urlsafe base64 for 32 bytes or 64-char hex."
+        ) from exc
 
     if len(key) != 32:
-        raise RuntimeError("FILE_MASTER_KEY must decode to exactly 32 bytes")
+        raise RuntimeError(
+            f"FILE_MASTER_KEY must decode to exactly 32 bytes (got {len(key)} bytes)"
+        )
 
     return key
 

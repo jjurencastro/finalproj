@@ -110,4 +110,8 @@ http://localhost:5000
 1. Add Railway PostgreSQL and copy its `DATABASE_URL` into service variables.
 2. Configure S3-compatible storage variables (`S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`).
 3. Set `APP_SECRET_KEY`, `FILE_MASTER_KEY`, and `COOKIE_SECURE=1`.
+	 - Generate `FILE_MASTER_KEY` as URL-safe base64 (recommended):
+		 `python3 -c 'import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'`
+	 - The app also accepts a 64-char hex key:
+		 `python3 -c 'import secrets; print(secrets.token_hex(32))'`
 4. Redeploy. The app auto-creates required tables at startup.
