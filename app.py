@@ -64,6 +64,20 @@ def load_master_key() -> bytes:
     # - 64-char hex string
     raw_value = encoded_key.strip()
 
+    # Railway/UI copy-paste sometimes includes wrapping quotes.
+    if (
+        len(raw_value) >= 2
+        and raw_value[0] == raw_value[-1]
+        and raw_value[0] in {'"', "'"}
+    ):
+        raw_value = raw_value[1:-1].strip()
+
+    # Accept Python-style bytes literal wrappers like b'...'.
+    if raw_value.startswith("b'") and raw_value.endswith("'"):
+        raw_value = raw_value[2:-1].strip()
+    elif raw_value.startswith('b"') and raw_value.endswith('"'):
+        raw_value = raw_value[2:-1].strip()
+
     # Try hex first for explicitness and easy debugging.
     try:
         if len(raw_value) == 64 and all(c in "0123456789abcdefABCDEF" for c in raw_value):
