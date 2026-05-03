@@ -38,7 +38,13 @@
             <tr>
                 <td>{{ file.original_name }}</td>
                 <td>{{ file.uploaded_at }}</td>
-                <td><a href="{{ url_for('download', file_id=file.id) }}">Decrypt and Download</a></td>
+                <td style="display:flex; gap:10px; align-items:center;">
+                    <a href="{{ url_for('download', file_id=file.id) }}">Decrypt and Download</a>
+                    <form method="post" action="{{ url_for('delete', file_id=file.id) }}" onsubmit="return confirm('Delete this file permanently?')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button class="btn btn-danger" type="submit">Delete</button>
+                    </form>
+                </td>
             </tr>
             {% endfor %}
         </tbody>

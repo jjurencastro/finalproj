@@ -570,6 +570,39 @@ def download(file_id: int):
     )
 
 
+@app.route("/delete/<int:file_id>", methods=["POST"])
+def delete(file_id: int):
+    # Demo step: delete a file the user owns (removes from storage and database).
+    user_id = login_required()
+
+    # 1) Validate CSRF token to prevent cross-site request forgery.
+    if not validate_csrf():
+        abort(400, "CSRF validation failed")
+
+    # 2) Fetch the file record but only if it belongs to the current user.
+    row = get_db().execute(
+        "SELECT id, stored_name FROM files WHERE id = %s AND owner_id = %s",
+        (file_id, user_id),
+    ).fetchone()
+    if row is None:
+        abort(404)
+
+    # 3) Remove encrypted object from cloud storage first.
+    try:
+        s3_client.delete_object(Bucket=S3_BUCKET, Key=row["stored_name"])
+    except (ClientError, BotoCoreError) as exc:
+        app.logger.exception("Delete object storage failure: %s", exc)
+        flash("Could not remove file from storage. Please try again.", "error")
+        return redirect(url_for("dashboard"))
+
+    # 4) Remove metadata from the database.
+    get_db().execute("DELETE FROM files WHERE id = %s AND owner_id = %s", (file_id, user_id))
+    get_db().commit()
+
+    flash("File deleted successfully.", "ok")
+    return redirect(url_for("dashboard"))
+
+
 @app.errorhandler(401)
 def unauthorized(_: object):
     flash("Please log in first.", "error")
