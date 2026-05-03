@@ -34,12 +34,19 @@ from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
 
+# Secure File Sharing System (Flask):
+# - Authenticated users upload/download files.
+# - Files are encrypted before object storage.
+# - Integrity is verified before download is returned.
+
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
+    # The app cannot run without a database connection string.
     raise RuntimeError("DATABASE_URL is required (Railway Postgres connection URL).")
 
 S3_BUCKET = os.environ.get("S3_BUCKET")
 if not S3_BUCKET:
+    # The app cannot upload/download files without a storage bucket.
     raise RuntimeError("S3_BUCKET is required for encrypted object storage.")
 
 S3_REGION = os.environ.get("S3_REGION", "us-east-1")
@@ -55,6 +62,7 @@ _db_bootstrapped = False
 
 
 def normalize_s3_endpoint(raw_endpoint: str | None, bucket: str) -> str | None:
+    # Cleans provider endpoint so boto3 can connect reliably.
     if not raw_endpoint:
         return None
 
@@ -152,8 +160,13 @@ app.config.update(
     SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "0") == "1",
 )
 
+# Data model summary for demo discussion:
+# - users table: account credentials.
+# - files table: encrypted file metadata (ciphertext is in object storage).
+
 
 def get_db() -> psycopg.Connection:
+    # Reuse one DB connection per request for better performance.
     ensure_db_ready()
     if "db" not in g:
         g.db = psycopg.connect(
@@ -172,6 +185,7 @@ def close_db(_: object) -> None:
 
 
 def init_db() -> None:
+    # Creates tables on first run so setup is automatic.
     db = psycopg.connect(DATABASE_URL, connect_timeout=DB_CONNECT_TIMEOUT)
     db.execute(
         """
@@ -213,6 +227,7 @@ def ensure_db_ready() -> None:
             return
         try:
             init_db()
+            # Mark as ready so future requests skip setup checks.
             _db_bootstrapped = True
         except Exception as exc:
             raise RuntimeError(
@@ -221,12 +236,15 @@ def ensure_db_ready() -> None:
 
 
 def derive_file_key(owner_id: int, salt: bytes) -> bytes:
+    # Per-file AES key derivation from one master key + random salt.
+    # Owner ID is mixed into HKDF context so keys are user-scoped.
     info = f"secure-share-owner:{owner_id}".encode("utf-8")
     hkdf = HKDF(algorithm=hashes.SHA256(), length=32, salt=salt, info=info)
     return hkdf.derive(MASTER_KEY)
 
 
 def encrypt_content(owner_id: int, data: bytes) -> tuple[bytes, bytes, bytes]:
+    # AES-256-GCM encryption path (confidentiality + tamper detection).
     salt = os.urandom(16)
     nonce = os.urandom(12)
     key = derive_file_key(owner_id, salt)
@@ -235,11 +253,13 @@ def encrypt_content(owner_id: int, data: bytes) -> tuple[bytes, bytes, bytes]:
 
 
 def decrypt_content(owner_id: int, salt: bytes, nonce: bytes, ciphertext: bytes) -> bytes:
+    # Decryption succeeds only if GCM authentication tag is valid.
     key = derive_file_key(owner_id, salt)
     return AESGCM(key).decrypt(nonce, ciphertext, None)
 
 
 def login_required() -> int:
+    # Simple guard: blocked users are redirected to log in.
     user_id = session.get("user_id")
     if user_id is None:
         abort(401)
@@ -247,6 +267,7 @@ def login_required() -> int:
 
 
 def current_user() -> dict[str, Any] | None:
+    # Used by templates to display the signed-in username.
     user_id = session.get("user_id")
     if user_id is None:
         return None
@@ -255,6 +276,7 @@ def current_user() -> dict[str, Any] | None:
 
 def store_ciphertext(stored_name: str, ciphertext: bytes) -> None:
     try:
+        # Save encrypted bytes only (never plaintext) to object storage.
         s3_client.put_object(
             Bucket=S3_BUCKET,
             Key=stored_name,
@@ -271,6 +293,7 @@ def store_ciphertext(stored_name: str, ciphertext: bytes) -> None:
 
 def load_ciphertext(stored_name: str) -> bytes | None:
     try:
+        # Read encrypted bytes back from object storage for download.
         response = s3_client.get_object(Bucket=S3_BUCKET, Key=stored_name)
         return response["Body"].read()
     except ClientError as exc:
@@ -301,6 +324,7 @@ def storage_error_hint(error_text: str) -> str:
 
 
 def ensure_csrf_token() -> str:
+    # Creates anti-CSRF token once per session to block forged form submits.
     token = session.get("csrf_token")
     if token is None:
         token = secrets.token_urlsafe(32)
@@ -309,6 +333,7 @@ def ensure_csrf_token() -> str:
 
 
 def validate_csrf() -> bool:
+    # Safe token compare avoids timing attacks.
     expected = session.get("csrf_token", "")
     provided = request.form.get("csrf_token", "")
     return bool(expected) and hmac.compare_digest(expected, provided)
@@ -321,6 +346,7 @@ def inject_csrf_token() -> dict[str, object]:
 
 @app.route("/")
 def index() -> str:
+    # Landing route sends users to login or dashboard.
     if session.get("user_id"):
         return redirect(url_for("dashboard"))
     return redirect(url_for("login"))
@@ -328,6 +354,7 @@ def index() -> str:
 
 @app.route("/healthz")
 def healthz() -> tuple[dict[str, str], int]:
+    # Health endpoint used by deployment platform checks.
     try:
         ensure_db_ready()
     except RuntimeError as exc:
@@ -337,7 +364,9 @@ def healthz() -> tuple[dict[str, str], int]:
 
 @app.route("/register", methods=["GET", "POST"])
 def register() -> str:
+    # Demo step: account creation with hashed password storage.
     if request.method == "POST":
+        # CSRF validation ensures the form came from our site.
         if not validate_csrf():
             abort(400, "CSRF validation failed")
 
@@ -348,6 +377,7 @@ def register() -> str:
             flash("Username must be >= 3 chars and password >= 8 chars.", "error")
             return render_template("register.html")
 
+        # Password is hashed so raw password is never stored.
         password_hash = generate_password_hash(password)
 
         db = get_db()
@@ -370,7 +400,9 @@ def register() -> str:
 
 @app.route("/login", methods=["GET", "POST"])
 def login() -> str:
+    # Demo step: login verifies password hash and starts secure session.
     if request.method == "POST":
+        # CSRF validation ensures the form came from our site.
         if not validate_csrf():
             abort(400, "CSRF validation failed")
 
@@ -384,8 +416,11 @@ def login() -> str:
             flash("Invalid username or password.", "error")
             return render_template("login.html")
 
+        # Clear old session data to prevent session fixation.
         session.clear()
+        # Store logged-in user ID in session cookie context.
         session["user_id"] = int(row["id"])
+        # Create fresh CSRF token for all protected forms.
         session["csrf_token"] = secrets.token_urlsafe(32)
         return redirect(url_for("dashboard"))
 
@@ -394,14 +429,17 @@ def login() -> str:
 
 @app.route("/logout", methods=["POST"])
 def logout() -> str:
+    # Require CSRF token for logout form too.
     if not validate_csrf():
         abort(400, "CSRF validation failed")
+    # Remove login state.
     session.clear()
     return redirect(url_for("login"))
 
 
 @app.route("/dashboard")
 def dashboard() -> str:
+    # Show only files owned by the currently logged-in user.
     user_id = login_required()
     files = get_db().execute(
         """
@@ -417,36 +455,48 @@ def dashboard() -> str:
 
 @app.route("/upload", methods=["POST"])
 def upload() -> str:
+    # Demo step: upload flow shown in the final project presentation.
+    # 1) Confirm user is logged in.
     user_id = login_required()
 
+    # 2) Validate anti-CSRF token.
     if not validate_csrf():
         abort(400, "CSRF validation failed")
 
+    # 3) Read file from submitted form.
     uploaded = request.files.get("file")
     if uploaded is None or uploaded.filename is None or uploaded.filename.strip() == "":
         flash("Please choose a file to upload.", "error")
         return redirect(url_for("dashboard"))
 
+    # 4) Get raw file bytes in memory.
     plaintext = uploaded.read()
     if not plaintext:
         flash("Empty files are not allowed.", "error")
         return redirect(url_for("dashboard"))
 
+    # 5) Enforce max upload size.
     if len(plaintext) > app.config["MAX_CONTENT_LENGTH"]:
         flash("File too large.", "error")
         return redirect(url_for("dashboard"))
 
+    # Integrity checkpoint 1: keep SHA-256 of original plaintext.
     sha256_hex = hashlib.sha256(plaintext).hexdigest()
+
+    # Core security operation: encrypt before sending to object storage.
     salt, nonce, ciphertext = encrypt_content(user_id, plaintext)
 
+    # 6) Use random storage filename so original name is not exposed in bucket key.
     stored_name = f"{uuid.uuid4().hex}.bin"
     try:
+        # 7) Upload encrypted content to object storage.
         store_ciphertext(stored_name, ciphertext)
     except RuntimeError as exc:
         app.logger.exception("Upload object storage failure: %s", exc)
         flash(storage_error_hint(str(exc)), "error")
         return redirect(url_for("dashboard"))
 
+    # 8) Save metadata needed for future download/decryption.
     get_db().execute(
         """
         INSERT INTO files (owner_id, original_name, stored_name, salt, nonce, sha256, uploaded_at)
@@ -464,14 +514,18 @@ def upload() -> str:
     )
     get_db().commit()
 
+    # 9) Show success to user and return to dashboard.
     flash("File uploaded and encrypted successfully.", "ok")
     return redirect(url_for("dashboard"))
 
 
 @app.route("/download/<int:file_id>")
 def download(file_id: int):
+    # Demo step: download flow with decryption and integrity verification.
+    # 1) Confirm user is logged in.
     user_id = login_required()
 
+    # 2) Load only if this file belongs to the current user.
     row = get_db().execute(
         """
         SELECT id, original_name, stored_name, salt, nonce, sha256
@@ -484,6 +538,7 @@ def download(file_id: int):
         abort(404)
 
     try:
+        # 3) Fetch encrypted bytes from object storage.
         ciphertext = load_ciphertext(row["stored_name"])
     except RuntimeError as exc:
         app.logger.exception("Download object storage failure: %s", exc)
@@ -493,14 +548,20 @@ def download(file_id: int):
         abort(404)
 
     try:
+        # Core security operation: decrypt object bytes back to plaintext.
+        # 4) Unlock file bytes using derived key + saved nonce/salt.
         plaintext = decrypt_content(user_id, row["salt"], row["nonce"], ciphertext)
     except InvalidTag:
+        # AES-GCM tag failure means ciphertext was modified or wrong key was used.
         abort(409, "Integrity verification failed: encrypted data was tampered with")
 
+    # Integrity checkpoint 2: compare plaintext hash with stored hash.
+    # 5) Verify downloaded plaintext fingerprint matches original upload.
     downloaded_hash = hashlib.sha256(plaintext).hexdigest()
     if not hmac.compare_digest(downloaded_hash, row["sha256"]):
         abort(409, "Integrity verification failed: hash mismatch")
 
+    # 6) Return decrypted file to user browser.
     return send_file(
         BytesIO(plaintext),
         as_attachment=True,
