@@ -590,9 +590,22 @@ def delete(file_id: int):
     # 3) Remove encrypted object from cloud storage first.
     try:
         s3_client.delete_object(Bucket=S3_BUCKET, Key=row["stored_name"])
-    except (ClientError, BotoCoreError) as exc:
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "Unknown")
+        message = exc.response.get("Error", {}).get("Message", "Unknown error")
         app.logger.exception("Delete object storage failure: %s", exc)
-        flash("Could not remove file from storage. Please try again.", "error")
+        if code == "AccessDenied":
+            flash(
+                f"Storage access denied ({code}): add s3:DeleteObject permission "
+                f"on bucket '{S3_BUCKET}' to your storage credentials.",
+                "error",
+            )
+        else:
+            flash(f"Could not remove file from storage ({code}): {message}", "error")
+        return redirect(url_for("dashboard"))
+    except BotoCoreError as exc:
+        app.logger.exception("Delete object storage failure: %s", exc)
+        flash(f"Could not remove file from storage: {exc}", "error")
         return redirect(url_for("dashboard"))
 
     # 4) Remove metadata from the database.
