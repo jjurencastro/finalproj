@@ -46,6 +46,7 @@ S3_REGION = os.environ.get("S3_REGION", "us-east-1")
 S3_ENDPOINT_URL_RAW = os.environ.get("S3_ENDPOINT_URL")
 S3_ACCESS_KEY_ID = os.environ.get("S3_ACCESS_KEY_ID")
 S3_SECRET_ACCESS_KEY = os.environ.get("S3_SECRET_ACCESS_KEY")
+S3_SESSION_TOKEN = os.environ.get("S3_SESSION_TOKEN")
 S3_FORCE_PATH_STYLE = os.environ.get("S3_FORCE_PATH_STYLE", "0") == "1"
 DB_CONNECT_TIMEOUT = int(os.environ.get("DB_CONNECT_TIMEOUT", "5"))
 
@@ -135,6 +136,8 @@ s3_client_kwargs: dict[str, Any] = {
     "aws_secret_access_key": S3_SECRET_ACCESS_KEY,
     "region_name": S3_REGION,
 }
+if S3_SESSION_TOKEN:
+    s3_client_kwargs["aws_session_token"] = S3_SESSION_TOKEN
 if S3_FORCE_PATH_STYLE:
     s3_client_kwargs["config"] = Config(s3={"addressing_style": "path"})
 
@@ -285,7 +288,10 @@ def storage_error_hint(error_text: str) -> str:
     if "nosuchbucket" in text:
         return "Storage bucket not found. Check S3_BUCKET."
     if "accessdenied" in text:
-        return "Storage access denied. Check key permissions for bucket read/write."
+        return (
+            "Storage access denied. Ensure credentials include s3:PutObject and s3:GetObject "
+            f"for bucket '{S3_BUCKET}' (and s3:ListBucket for diagnostics)."
+        )
     if "invalidaccesskeyid" in text or "signaturedoesnotmatch" in text:
         return "Storage credentials/signing failed. Check S3 keys, region, and endpoint."
     if "could not connect" in text or "endpoint" in text:

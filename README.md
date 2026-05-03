@@ -71,6 +71,7 @@ export S3_REGION="us-east-1"
 export S3_ENDPOINT_URL="https://s3.amazonaws.com"
 export S3_ACCESS_KEY_ID="your-access-key"
 export S3_SECRET_ACCESS_KEY="your-secret-key"
+export S3_SESSION_TOKEN="your-session-token-if-using-temporary-creds"
 ```
 
 Optional (recommended in HTTPS deployments):
@@ -112,6 +113,28 @@ http://localhost:5000
 	- If your provider requires path-style S3 URLs (common for MinIO/LocalStack/some gateways), set `S3_FORCE_PATH_STYLE=1`.
 	- `S3_ENDPOINT_URL` should be host-only (for example `https://account.r2.cloudflarestorage.com`), not a bucket URL.
 	- Missing scheme is auto-normalized to `https://`.
+	- If credentials are temporary STS credentials, also set `S3_SESSION_TOKEN`.
+	- Make sure the key/token has bucket permissions for read/write. Minimal AWS-style policy:
+
+```json
+{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Sid": "AllowBucketList",
+			"Effect": "Allow",
+			"Action": ["s3:ListBucket"],
+			"Resource": ["arn:aws:s3:::YOUR_BUCKET_NAME"]
+		},
+		{
+			"Sid": "AllowObjectReadWrite",
+			"Effect": "Allow",
+			"Action": ["s3:GetObject", "s3:PutObject"],
+			"Resource": ["arn:aws:s3:::YOUR_BUCKET_NAME/*"]
+		}
+	]
+}
+```
 3. Set `APP_SECRET_KEY`, `FILE_MASTER_KEY`, and `COOKIE_SECURE=1`.
 	 - Generate `FILE_MASTER_KEY` as URL-safe base64 (recommended):
 		 `python3 -c 'import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'`
